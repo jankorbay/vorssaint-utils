@@ -239,6 +239,29 @@ enum DisplayRestorationTests {
             return BrightnessService()
         }
         var service = make()
+        // The worker has approved two displays. The second one disappears
+        // while its transaction waits for the main thread.
+        service.pendingDisplayIDs = [2]
+        DispatchQueue.main.async { [weak service] in
+            service?.commitDisplayToggle(BrightnessDisplay(id: 2, isActive: true), enabled: false)
+        }
+        Hardware.topology = BrightnessSupport.DisplayTopology(online: [2], active: [2])
+        DispatchQueue.main.drain()
+        suite.expect(Hardware.transactions == 0 && service.displayControlFailure == .lastActive
+                     && service.pendingDisplayIDs.isEmpty && UserDefaults.standard.stored.isEmpty,
+                     "a disconnect before main-thread commit refuses to turn off the last drawable display")
+        Hardware.topology = BrightnessSupport.DisplayTopology(online: [1, 2], active: [1, 2])
+        Hardware.info = [1: ["kCGDisplayIsVirtualDevice": true]]
+        service.commitDisplayToggle(BrightnessDisplay(id: 2, isActive: true), enabled: false)
+        suite.expect(Hardware.transactions == 0 && service.displayControlFailure == .lastActive,
+                     "a virtual replacement cannot satisfy transaction-time last-display protection")
+        Hardware.info = [:]
+        service.commitDisplayToggle(BrightnessDisplay(id: 2, isActive: true), enabled: false)
+        suite.expect(Hardware.transactions == 1 && service.displayControlFailure == nil
+                     && UserDefaults.standard.stored == [2],
+                     "a later explicit disable succeeds once another drawable monitor is present")
+
+        service = make()
         UserDefaults.standard.stored = [1]
         service.restoreDisplaysLeftOff()
         service.restoreDisplaysLeftOff()
